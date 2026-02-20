@@ -101,3 +101,93 @@ def get_credentials(sheet_integration: SheetIntegration) -> dict:
         "refresh_token": decrypt(sheet_integration.encrypted_refresh_token),
         "token_expires_at": sheet_integration.token_expires_at,
     }
+
+
+async def _refresh_token_if_needed(
+    db: AsyncSession, integration: SheetIntegration
+) -> str:
+    """Return a valid access token, refreshing via Google if within 60s of expiry."""
+    now = datetime.now(timezone.utc)
+    expires_at = integration.token_expires_at
+    if expires_at is None or (expires_at - now).total_seconds() < 60:
+        refresh_token = decrypt(integration.encrypted_refresh_token)
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "client_id": settings.google_client_id,
+                    "client_secret": settings.google_client_secret,
+                    "refresh_token": refresh_token,
+                    "grant_type": "refresh_token",
+                },
+            )
+            response.raise_for_status()
+            tokens = response.json()
+
+        new_access_token = tokens.get("access_token", "")
+        expires_in = tokens.get("expires_in", 3600)
+        integration.encrypted_access_token = encrypt(new_access_token)
+        integration.token_expires_at = now + timedelta(seconds=expires_in)
+        await db.flush()
+        return new_access_token
+
+    return decrypt(integration.encrypted_access_token)
+
+
+def _col_idx_to_letter(idx: int) -> str:
+    """Convert 0-based column index to letter (0→A, 1→B, 25→Z, 26→AA)."""
+    result = ""
+    idx += 1
+    while idx > 0:
+        idx, rem = divmod(idx - 1, 26)
+        result = chr(ord("A") + rem) + result
+    return result
+
+
+async def get_sheet_headers(
+    db: AsyncSession,
+    integration: SheetIntegration,
+) -> list[dict]:
+    """Read row 1 of the sheet and return non-empty column headers with their letter."""
+    access_token = await _refresh_token_if_needed(db, integration)
+    url = (
+        f"https://sheets.googleapis.com/v4/spreadsheets/"
+        f"{integration.google_sheet_id}/values/1:1"
+    )
+    async with httpx.AsyncClient() as client:
+        r = await client.get(
+            url,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        r.raise_for_status()
+        data = r.json()
+
+    row = data.get("values", [[]])[0] if data.get("values") else []
+    headers = []
+    for idx, cell in enumerate(row):
+        if cell and str(cell).strip():
+            headers.append({"column": _col_idx_to_letter(idx), "name": str(cell).strip()})
+    return headers
+
+
+async def append_to_sheet(
+    db: AsyncSession,
+    integration: SheetIntegration,
+    target_column: str,
+    value: str,
+) -> None:
+    """Append a value to the specified column of the Google Sheet."""
+    access_token = await _refresh_token_if_needed(db, integration)
+    range_notation = f"{target_column}:{target_column}"
+    url = (
+        f"https://sheets.googleapis.com/v4/spreadsheets/"
+        f"{integration.google_sheet_id}/values/{range_notation}:append"
+    )
+    async with httpx.AsyncClient() as client:
+        r = await client.post(
+            url,
+            params={"valueInputOption": "USER_ENTERED"},
+            json={"values": [[value]]},
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        r.raise_for_status()

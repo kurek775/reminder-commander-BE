@@ -34,6 +34,7 @@ class TrackerRule(Base, TimestampMixin):
     )
     cron_schedule: Mapped[str] = mapped_column(sa.String(100), nullable=False)
     target_column: Mapped[str] = mapped_column(sa.String(100), nullable=False)
+    metric_name: Mapped[str | None] = mapped_column(sa.String(100), nullable=True)
     prompt_text: Mapped[str] = mapped_column(sa.Text, nullable=False)
     is_active: Mapped[bool] = mapped_column(
         sa.Boolean, default=True, server_default="true"

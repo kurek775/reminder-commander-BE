@@ -74,6 +74,16 @@ services:
         condition: service_healthy
     command: celery -A app.worker.celery_app beat --loglevel=info --scheduler celery.beat:PersistentScheduler
 
+  ngrok:
+    image: ngrok/ngrok:latest
+    command: http api:8000
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    ports:
+      - "4040:4040"
+    depends_on:
+      - api
+
 volumes:
   postgres_data:
   redis_data:

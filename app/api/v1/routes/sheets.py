@@ -1,15 +1,18 @@
+import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
 from app.db.base import get_db
+from app.models.sheet_integration import SheetIntegration
 from app.models.user import User
 from app.schemas.sheet import SheetIntegrationResponse, SheetsAuthUrlResponse
 from app.services.sheets_service import (
     exchange_sheets_code,
+    get_sheet_headers,
     get_sheets_auth_url,
     get_user_integrations,
 )
@@ -44,3 +47,15 @@ async def list_sheets(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> list:
     return await get_user_integrations(db, current_user.id)
+
+
+@router.get("/{integration_id}/headers")
+async def get_integration_headers(
+    integration_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[dict]:
+    integration = await db.get(SheetIntegration, integration_id)
+    if not integration or integration.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Sheet integration not found")
+    return await get_sheet_headers(db, integration)

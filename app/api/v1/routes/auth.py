@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
@@ -85,6 +86,15 @@ async def link_whatsapp(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
+    if body.phone != current_user.whatsapp_phone:
+        existing = await db.execute(
+            select(User).where(
+                User.whatsapp_phone == body.phone,
+                User.id != current_user.id,
+            )
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail="Phone number already in use")
     current_user.whatsapp_phone = body.phone
     db.add(current_user)
     return {"message": "WhatsApp phone linked", "phone": body.phone}

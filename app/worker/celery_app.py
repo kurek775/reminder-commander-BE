@@ -15,4 +15,10 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    beat_schedule={
+        "check-and-send-reminders": {
+            "task": "check_and_send_reminders",
+            "schedule": 60.0,
+        },
+    },
 )
