@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
@@ -18,9 +19,10 @@ router = APIRouter(prefix="/sheets", tags=["sheets"])
 
 @router.get("/connect", response_model=SheetsAuthUrlResponse)
 async def connect_sheet(
+    sheet_url: str,
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
-    return {"auth_url": get_sheets_auth_url(str(current_user.id))}
+    return {"auth_url": get_sheets_auth_url(str(current_user.id), sheet_url)}
 
 
 @router.get("/callback")
@@ -28,9 +30,12 @@ async def sheets_callback(
     code: str,
     state: str,
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> dict:
-    await exchange_sheets_code(db, code, state)
-    return {"message": "Sheet connected successfully"}
+) -> RedirectResponse:
+    try:
+        await exchange_sheets_code(db, code, state)
+        return RedirectResponse(url="http://localhost:4200/sheets", status_code=302)
+    except Exception:
+        return RedirectResponse(url="http://localhost:4200/sheets?error=true", status_code=302)
 
 
 @router.get("/", response_model=list[SheetIntegrationResponse])
