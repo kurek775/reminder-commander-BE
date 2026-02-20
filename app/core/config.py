@@ -20,10 +20,34 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["http://localhost:4200", "http://localhost:3000"]
 
+    # JWT
+    secret_key: str = "dev-secret-key-change-in-production-min-32-chars!!"
+    algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 7
+
+    # Google OAuth (login)
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = "http://localhost:8000/api/v1/auth/google/callback"
+
+    # Google Sheets OAuth
+    google_sheets_redirect_uri: str = "http://localhost:8000/api/v1/sheets/callback"
+
+    # Encryption (Fernet key, base64 url-safe 32 bytes)
+    encryption_key: str = ""
+
     @property
     def database_url(self) -> str:
         return (
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @property
+    def sync_database_url(self) -> str:
+        return (
+            f"postgresql+psycopg2://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
