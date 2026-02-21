@@ -1,5 +1,7 @@
 import asyncio
+import json
 import logging
+import uuid
 from datetime import datetime, timezone
 
 from croniter import croniter
@@ -13,7 +15,8 @@ from app.models.interaction_log import (
     InteractionLog,
     MessageStatus,
 )
-from app.models.tracker_rule import TrackerRule
+from app.models.sheet_integration import SheetIntegration
+from app.models.tracker_rule import RuleType, TrackerRule
 from app.models.user import User
 from app.services.twilio_service import send_whatsapp
 from app.worker.celery_app import celery_app
@@ -51,6 +54,7 @@ async def _process_rules(session) -> None:
         .join(User, TrackerRule.user_id == User.id)
         .where(
             TrackerRule.is_active.is_(True),
+            TrackerRule.rule_type == RuleType.health_tracker,
             User.is_active.is_(True),
             User.whatsapp_phone.is_not(None),
         )
@@ -83,3 +87,131 @@ async def _process_rules(session) -> None:
             )
         )
         await session.flush()
+
+
+@celery_app.task(name="scan_warlord_sheets")
+def scan_warlord_sheets(force: bool = False) -> None:
+    asyncio.run(_async_scan_warlord(force=force))
+
+
+async def _async_scan_warlord(force: bool = False) -> None:
+    engine = create_async_engine(settings.database_url, echo=False)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with factory() as session:
+            await _process_warlord_rules(session, force=force)
+            await session.commit()
+    finally:
+        await engine.dispose()
+
+
+async def _process_warlord_rules(session, force: bool = False) -> None:
+    import redis.asyncio as aioredis
+
+    from app.services.elevenlabs_service import generate_audio
+    from app.services.sheets_service import get_warlord_tasks
+    from app.services.twilio_service import make_voice_call
+
+    now = datetime.now(timezone.utc)
+
+    result = await session.execute(
+        select(TrackerRule, User, SheetIntegration)
+        .join(User, TrackerRule.user_id == User.id)
+        .join(SheetIntegration, TrackerRule.sheet_integration_id == SheetIntegration.id)
+        .where(
+            TrackerRule.is_active.is_(True),
+            TrackerRule.rule_type == RuleType.warlord,
+            User.is_active.is_(True),
+            User.whatsapp_phone.is_not(None),
+        )
+    )
+    rows = result.all()
+
+    r = aioredis.Redis(host=settings.redis_host, port=settings.redis_port, db=0)
+    try:
+        for rule, user, integration in rows:
+            if not force and not croniter.match(rule.cron_schedule, now):
+                continue
+
+            try:
+                tasks = await get_warlord_tasks(session, integration)
+            except Exception:
+                logger.exception("Failed to fetch warlord tasks for rule %s", rule.id)
+                continue
+
+            for task in tasks:
+                call_uuid = str(uuid.uuid4())
+                if rule.prompt_text:
+                    msg = (
+                        rule.prompt_text
+                        .replace("{task_name}", task.task_name)
+                        .replace("{deadline}", str(task.deadline))
+                    )
+                else:
+                    msg = f"{task.task_name} was due on {task.deadline}. Complete it now."
+
+                try:
+                    audio_bytes = await generate_audio(msg)
+                except Exception:
+                    logger.exception("ElevenLabs TTS failed for task %s", task.task_name)
+                    audio_bytes = None
+
+                log = InteractionLog(
+                    user_id=user.id,
+                    tracker_rule_id=rule.id,
+                    direction=Direction.outbound,
+                    channel=Channel.voice,
+                    message_content=msg,
+                    status=MessageStatus.sent,
+                )
+                session.add(log)
+                await session.flush()
+                await session.refresh(log)
+
+                loop = asyncio.get_event_loop()
+
+                # Store context for TwiML endpoint (always, regardless of audio)
+                ctx = {
+                    "user_id": str(user.id),
+                    "tracker_rule_id": str(rule.id),
+                    "task_name": task.task_name,
+                    "message": msg,
+                    "interaction_log_id": str(log.id),
+                    "whatsapp_phone": user.whatsapp_phone,
+                }
+                await r.setex(f"voice_ctx:{call_uuid}", 3600, json.dumps(ctx))
+
+                # Store audio only if ElevenLabs succeeded
+                if audio_bytes:
+                    await r.setex(f"voice_audio:{call_uuid}", 3600, audio_bytes)
+
+                # Always attempt voice call; TwiML will <Play> or <Say> depending on audio
+                twiml_url = f"{settings.backend_url}/api/v1/voice/twiml/{call_uuid}"
+                status_url = f"{settings.backend_url}/api/v1/voice/status/{call_uuid}"
+                try:
+                    call_sid = await loop.run_in_executor(
+                        None, make_voice_call, user.whatsapp_phone, twiml_url, status_url
+                    )
+                    logger.info(
+                        "Voice call initiated: sid=%s for task %s",
+                        call_sid,
+                        task.task_name,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Voice call failed for task %s, sending WhatsApp fallback",
+                        task.task_name,
+                    )
+                    try:
+                        await loop.run_in_executor(
+                            None,
+                            send_whatsapp,
+                            user.whatsapp_phone,
+                            f"Missed task: {task.task_name}",
+                        )
+                    except Exception:
+                        logger.exception(
+                            "WhatsApp fallback also failed for task %s", task.task_name
+                        )
+    finally:
+        await r.aclose()

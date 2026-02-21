@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-commander}
       POSTGRES_DB: ${POSTGRES_DB:-commander}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -76,7 +76,7 @@ services:
 
   ngrok:
     image: ngrok/ngrok:latest
-    command: http api:8000
+    command: http --domain=tandy-unhit-opportunistically.ngrok-free.dev api:8000
     environment:
       NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
     ports:

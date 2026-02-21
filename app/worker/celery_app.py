@@ -20,5 +20,9 @@ celery_app.conf.update(
             "task": "check_and_send_reminders",
             "schedule": 60.0,
         },
+        "scan-warlord-sheets": {
+            "task": "scan_warlord_sheets",
+            "schedule": 60.0,
+        },
     },
 )

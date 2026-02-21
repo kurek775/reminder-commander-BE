@@ -2,7 +2,8 @@ import base64
 import json
 import re
 import uuid
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import httpx
@@ -168,6 +169,60 @@ async def get_sheet_headers(
         if cell and str(cell).strip():
             headers.append({"column": _col_idx_to_letter(idx), "name": str(cell).strip()})
     return headers
+
+
+@dataclass
+class WarlordTask:
+    row_index: int
+    task_name: str
+    deadline: date
+
+
+async def get_warlord_tasks(
+    db: AsyncSession,
+    integration: SheetIntegration,
+) -> list[WarlordTask]:
+    """Return sheet rows where deadline < today and done != TRUE.
+
+    Expected sheet layout (row 1 = headers, skipped):
+      Col A: task name
+      Col B: deadline date (YYYY-MM-DD)
+      Col C: done (TRUE / FALSE checkbox)
+    """
+    access_token = await _refresh_token_if_needed(db, integration)
+    url = (
+        f"https://sheets.googleapis.com/v4/spreadsheets/"
+        f"{integration.google_sheet_id}/values/A:C"
+    )
+    async with httpx.AsyncClient() as client:
+        r = await client.get(
+            url,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        r.raise_for_status()
+        data = r.json()
+
+    rows = data.get("values", [])
+    today = date.today()
+    missed: list[WarlordTask] = []
+
+    for i, row in enumerate(rows[1:], start=2):  # skip header, 1-indexed
+        task_name = row[0].strip() if len(row) > 0 else ""
+        deadline_str = row[1].strip() if len(row) > 1 else ""
+        done = row[2].strip() if len(row) > 2 else "FALSE"
+
+        if not task_name or not deadline_str:
+            continue
+
+        try:
+            deadline = date.fromisoformat(deadline_str)
+        except ValueError:
+            continue
+
+        if deadline < today and done.upper() != "TRUE":
+            missed.append(WarlordTask(row_index=i, task_name=task_name, deadline=deadline))
+
+    return missed
 
 
 async def append_to_sheet(

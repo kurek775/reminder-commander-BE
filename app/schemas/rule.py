@@ -17,6 +17,10 @@ class TrackerRuleCreate(BaseModel):
     is_active: bool = True
 
 
+class TrackerRuleUpdate(BaseModel):
+    prompt_text: str
+
+
 class TrackerRuleResponse(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID

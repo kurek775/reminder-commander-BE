@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_whatsapp_from: str = "whatsapp:+14155238886"
+    twilio_voice_from: str = ""
+
+    # ElevenLabs
+    elevenlabs_api_key: str = ""
+    elevenlabs_voice_id: str = "JBFqnCBsd6RMkjVDRZzb"
+
+    # Public backend URL (must be reachable by Twilio)
+    backend_url: str = "http://localhost:8000"
 
     @property
     def database_url(self) -> str:

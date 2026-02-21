@@ -34,6 +34,24 @@ async def get_user_rules(db: AsyncSession, user_id: uuid.UUID) -> list[TrackerRu
     return list(result.scalars().all())
 
 
+async def update_rule_prompt(
+    db: AsyncSession, rule_id: uuid.UUID, user_id: uuid.UUID, prompt_text: str
+) -> TrackerRule | None:
+    result = await db.execute(
+        select(TrackerRule).where(
+            TrackerRule.id == rule_id,
+            TrackerRule.user_id == user_id,
+        )
+    )
+    rule = result.scalar_one_or_none()
+    if rule is None:
+        return None
+    rule.prompt_text = prompt_text
+    await db.flush()
+    await db.refresh(rule)
+    return rule
+
+
 async def delete_rule(
     db: AsyncSession, rule_id: uuid.UUID, user_id: uuid.UUID
 ) -> bool:
