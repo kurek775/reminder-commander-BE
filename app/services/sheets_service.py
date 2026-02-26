@@ -1,5 +1,8 @@
 import base64
+import hashlib
+import hmac
 import json
+import logging
 import re
 import uuid
 from dataclasses import dataclass
@@ -14,11 +17,33 @@ from app.core.config import settings
 from app.core.encryption import decrypt, encrypt
 from app.models.sheet_integration import SheetIntegration
 
+logger = logging.getLogger(__name__)
+
+# HTTP timeout for Google API calls (M6)
+_HTTP_TIMEOUT = 30.0
+
+
+def _sign_state(payload: str) -> str:
+    """HMAC-sign a state payload and return base64(payload|signature)."""
+    sig = hmac.new(settings.secret_key.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    combined = json.dumps({"payload": payload, "sig": sig})
+    return base64.urlsafe_b64encode(combined.encode()).decode()
+
+
+def _verify_state(state: str) -> dict:
+    """Verify HMAC-signed state and return the decoded payload dict."""
+    combined = json.loads(base64.urlsafe_b64decode(state).decode())
+    payload = combined["payload"]
+    sig = combined["sig"]
+    expected = hmac.new(settings.secret_key.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        raise ValueError("Invalid OAuth state signature")
+    return json.loads(payload)
+
 
 def get_sheets_auth_url(user_id: str, sheet_url: str) -> str:
-    state = base64.b64encode(
-        json.dumps({"user_id": user_id, "sheet_url": sheet_url}).encode()
-    ).decode()
+    payload = json.dumps({"user_id": user_id, "sheet_url": sheet_url})
+    state = _sign_state(payload)
     params = {
         "client_id": settings.google_client_id,
         "redirect_uri": settings.google_sheets_redirect_uri,
@@ -35,14 +60,14 @@ def get_sheets_auth_url(user_id: str, sheet_url: str) -> str:
 
 
 async def exchange_sheets_code(db: AsyncSession, code: str, state: str) -> SheetIntegration:
-    decoded = json.loads(base64.b64decode(state).decode())
+    decoded = _verify_state(state)
     user_id: str = decoded["user_id"]
     sheet_url: str = decoded["sheet_url"]
 
     match = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", sheet_url)
     spreadsheet_id = match.group(1) if match else ""
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
         response = await client.post(
             "https://oauth2.googleapis.com/token",
             data={
@@ -64,7 +89,7 @@ async def exchange_sheets_code(db: AsyncSession, code: str, state: str) -> Sheet
 
     sheet_name = spreadsheet_id
     if spreadsheet_id and access_token:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             r = await client.get(
                 f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}",
                 params={"fields": "properties.title"},
@@ -112,7 +137,7 @@ async def _refresh_token_if_needed(
     expires_at = integration.token_expires_at
     if expires_at is None or (expires_at - now).total_seconds() < 60:
         refresh_token = decrypt(integration.encrypted_refresh_token)
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             response = await client.post(
                 "https://oauth2.googleapis.com/token",
                 data={
@@ -155,7 +180,7 @@ async def get_sheet_headers(
         f"https://sheets.googleapis.com/v4/spreadsheets/"
         f"{integration.google_sheet_id}/values/1:1"
     )
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
         r = await client.get(
             url,
             headers={"Authorization": f"Bearer {access_token}"},
@@ -194,7 +219,7 @@ async def get_warlord_tasks(
         f"https://sheets.googleapis.com/v4/spreadsheets/"
         f"{integration.google_sheet_id}/values/A:C"
     )
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
         r = await client.get(
             url,
             headers={"Authorization": f"Bearer {access_token}"},
@@ -238,7 +263,7 @@ async def append_to_sheet(
         f"https://sheets.googleapis.com/v4/spreadsheets/"
         f"{integration.google_sheet_id}/values/{range_notation}:append"
     )
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
         r = await client.post(
             url,
             params={"valueInputOption": "USER_ENTERED"},

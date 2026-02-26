@@ -23,6 +23,18 @@ from app.worker.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
+# M8: Module-level engine reused across tasks instead of creating per-task
+_engine = None
+_factory = None
+
+
+def _get_session_factory():
+    global _engine, _factory
+    if _engine is None:
+        _engine = create_async_engine(settings.database_url, echo=False, pool_pre_ping=True)
+        _factory = async_sessionmaker(_engine, expire_on_commit=False)
+    return _factory
+
 
 @celery_app.task(name="ping")
 def ping() -> str:
@@ -30,20 +42,22 @@ def ping() -> str:
     return "pong"
 
 
-@celery_app.task(name="check_and_send_reminders")
+@celery_app.task(
+    name="check_and_send_reminders",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=300,
+    max_retries=3,
+)
 def check_and_send_reminders() -> None:
     asyncio.run(_async_check_and_send())
 
 
 async def _async_check_and_send() -> None:
-    engine = create_async_engine(settings.database_url, echo=False)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    try:
-        async with factory() as session:
-            await _process_rules(session)
-            await session.commit()
-    finally:
-        await engine.dispose()
+    factory = _get_session_factory()
+    async with factory() as session:
+        await _process_rules(session)
+        await session.commit()
 
 
 async def _process_rules(session) -> None:
@@ -89,25 +103,26 @@ async def _process_rules(session) -> None:
         await session.flush()
 
 
-@celery_app.task(name="scan_warlord_sheets")
+@celery_app.task(
+    name="scan_warlord_sheets",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=300,
+    max_retries=3,
+)
 def scan_warlord_sheets(force: bool = False) -> None:
     asyncio.run(_async_scan_warlord(force=force))
 
 
 async def _async_scan_warlord(force: bool = False) -> None:
-    engine = create_async_engine(settings.database_url, echo=False)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    try:
-        async with factory() as session:
-            await _process_warlord_rules(session, force=force)
-            await session.commit()
-    finally:
-        await engine.dispose()
+    factory = _get_session_factory()
+    async with factory() as session:
+        await _process_warlord_rules(session, force=force)
+        await session.commit()
 
 
 async def _process_warlord_rules(session, force: bool = False) -> None:
-    import redis.asyncio as aioredis
-
+    from app.core.redis import _create_redis
     from app.services.elevenlabs_service import generate_audio
     from app.services.sheets_service import get_warlord_tasks
     from app.services.twilio_service import make_voice_call
@@ -127,7 +142,7 @@ async def _process_warlord_rules(session, force: bool = False) -> None:
     )
     rows = result.all()
 
-    r = aioredis.Redis(host=settings.redis_host, port=settings.redis_port, db=0)
+    r = _create_redis()
     try:
         for rule, user, integration in rows:
             if not force and not croniter.match(rule.cron_schedule, now):
@@ -170,7 +185,6 @@ async def _process_warlord_rules(session, force: bool = False) -> None:
 
                 loop = asyncio.get_event_loop()
 
-                # Store context for TwiML endpoint (always, regardless of audio)
                 ctx = {
                     "user_id": str(user.id),
                     "tracker_rule_id": str(rule.id),
@@ -181,11 +195,9 @@ async def _process_warlord_rules(session, force: bool = False) -> None:
                 }
                 await r.setex(f"voice_ctx:{call_uuid}", 3600, json.dumps(ctx))
 
-                # Store audio only if ElevenLabs succeeded
                 if audio_bytes:
                     await r.setex(f"voice_audio:{call_uuid}", 3600, audio_bytes)
 
-                # Always attempt voice call; TwiML will <Play> or <Say> depending on audio
                 twiml_url = f"{settings.backend_url}/api/v1/voice/twiml/{call_uuid}"
                 status_url = f"{settings.backend_url}/api/v1/voice/status/{call_uuid}"
                 try:

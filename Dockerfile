@@ -27,8 +27,11 @@ FROM base AS production
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 
 COPY app/ ./app/
+COPY alembic/ ./alembic/
+COPY alembic.ini ./
+COPY entrypoint.prod.sh ./
 
-RUN chown -R appuser:appgroup /app
+RUN chmod +x entrypoint.prod.sh && chown -R appuser:appgroup /app
 USER appuser
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

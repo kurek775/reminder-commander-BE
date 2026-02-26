@@ -1,11 +1,12 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
+from app.core.rate_limit import limiter
 from app.db.base import get_db
 from app.models.tracker_rule import RuleType, TrackerRule
 from app.models.sheet_integration import SheetIntegration
@@ -16,7 +17,9 @@ router = APIRouter(prefix="/warlord", tags=["warlord"])
 
 
 @router.post("/trigger", status_code=200)
+@limiter.limit("5/minute")
 async def trigger_warlord_scan(
+    request: Request,
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
     """Immediately queue the warlord sheet scanner Celery task."""
@@ -44,7 +47,7 @@ async def debug_warlord_rule(
     )
     row = result.first()
     if not row:
-        return {"error": "rule not found"}
+        raise HTTPException(status_code=404, detail="Rule not found")
 
     rule, integration = row
 

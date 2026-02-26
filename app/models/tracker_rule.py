@@ -22,6 +22,7 @@ class TrackerRule(Base, TimestampMixin):
         sa.Uuid(as_uuid=True),
         sa.ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     sheet_integration_id: Mapped[uuid.UUID] = mapped_column(
         sa.Uuid(as_uuid=True),

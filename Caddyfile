@@ -1,0 +1,13 @@
+{$DOMAIN:localhost} {
+	# API — proxy to FastAPI
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	# Frontend — serve static Angular build
+	handle {
+		root * /srv/www
+		try_files {path} /index.html
+		file_server
+	}
+}

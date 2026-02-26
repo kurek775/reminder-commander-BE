@@ -35,11 +35,13 @@ class InteractionLog(Base):
         sa.Uuid(as_uuid=True),
         sa.ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     tracker_rule_id: Mapped[uuid.UUID | None] = mapped_column(
         sa.Uuid(as_uuid=True),
         sa.ForeignKey("tracker_rules.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     direction: Mapped[Direction] = mapped_column(
         sa.Enum(Direction, name="direction"), nullable=False
@@ -55,4 +57,5 @@ class InteractionLog(Base):
         sa.DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         server_default=sa.func.now(),
+        index=True,
     )

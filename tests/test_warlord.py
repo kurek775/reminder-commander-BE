@@ -6,7 +6,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.routes.voice import get_redis
+from app.core.redis import get_redis
 from app.core.encryption import encrypt
 from app.main import app
 from app.models.interaction_log import Channel, Direction, InteractionLog

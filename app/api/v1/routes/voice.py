@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import AsyncGenerator
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, Form, HTTPException, Response
@@ -10,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from twilio.twiml.voice_response import Gather, VoiceResponse
 
 from app.core.config import settings
+from app.core.redis import get_redis
+from app.core.twilio_auth import verify_twilio_signature
 from app.db.base import get_db
 from app.models.interaction_log import Channel, Direction, InteractionLog, MessageStatus
 from app.services.twilio_service import send_whatsapp
@@ -19,15 +20,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/voice", tags=["voice"])
 
 
-async def get_redis() -> AsyncGenerator[aioredis.Redis, None]:
-    r = aioredis.Redis(host=settings.redis_host, port=settings.redis_port, db=0)
-    try:
-        yield r
-    finally:
-        await r.aclose()
-
-
-@router.api_route("/twiml/{call_uuid}", methods=["GET", "POST"])
+@router.api_route("/twiml/{call_uuid}", methods=["GET", "POST"], dependencies=[Depends(verify_twilio_signature)])
 async def get_twiml(
     call_uuid: str,
     r: aioredis.Redis = Depends(get_redis),
@@ -38,19 +31,22 @@ async def get_twiml(
     response = VoiceResponse()
     gather = Gather(num_digits="1", action=gather_url, method="POST")
 
-    has_audio = await r.exists(f"voice_audio:{call_uuid}")
-    if has_audio:
-        audio_url = f"{settings.backend_url}/api/v1/voice/audio/{call_uuid}"
-        gather.play(audio_url)
-    else:
-        # ElevenLabs unavailable — use Twilio built-in TTS
-        ctx_raw = await r.get(f"voice_ctx:{call_uuid}")
-        text = "You have a missed task. Please acknowledge."
-        if ctx_raw:
-            ctx = json.loads(ctx_raw)
-            task_name = ctx.get("task_name", "")
-            text = f"{ctx.get('message', task_name + ' is overdue. Please acknowledge.')}"
-        gather.say(text)
+    try:
+        has_audio = await r.exists(f"voice_audio:{call_uuid}")
+        if has_audio:
+            audio_url = f"{settings.backend_url}/api/v1/voice/audio/{call_uuid}"
+            gather.play(audio_url)
+        else:
+            ctx_raw = await r.get(f"voice_ctx:{call_uuid}")
+            text = "You have a missed task. Please acknowledge."
+            if ctx_raw:
+                ctx = json.loads(ctx_raw)
+                task_name = ctx.get("task_name", "")
+                text = f"{ctx.get('message', task_name + ' is overdue. Please acknowledge.')}"
+            gather.say(text)
+    except aioredis.RedisError:
+        logger.exception("Redis error in get_twiml for %s", call_uuid)
+        gather.say("You have a missed task. Please acknowledge.")
 
     response.append(gather)
     return Response(content=str(response), media_type="application/xml")
@@ -68,7 +64,7 @@ async def get_audio(
     return Response(content=bytes(data), media_type="audio/mpeg")
 
 
-@router.post("/gather/{call_uuid}")
+@router.post("/gather/{call_uuid}", dependencies=[Depends(verify_twilio_signature)])
 async def handle_gather(
     call_uuid: str,
     Digits: str = Form(default=""),
@@ -76,8 +72,14 @@ async def handle_gather(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Twilio posts the key pressed by the caller; log it as an inbound voice interaction."""
-    ctx_raw = await r.get(f"voice_ctx:{call_uuid}")
     twiml = VoiceResponse()
+
+    try:
+        ctx_raw = await r.get(f"voice_ctx:{call_uuid}")
+    except aioredis.RedisError:
+        logger.exception("Redis error in handle_gather for %s", call_uuid)
+        twiml.say("An error occurred. Goodbye.")
+        return Response(content=str(twiml), media_type="application/xml")
 
     if ctx_raw:
         ctx = json.loads(ctx_raw)
@@ -96,7 +98,7 @@ async def handle_gather(
     return Response(content=str(twiml), media_type="application/xml")
 
 
-@router.post("/status/{call_uuid}")
+@router.post("/status/{call_uuid}", dependencies=[Depends(verify_twilio_signature)])
 async def handle_status(
     call_uuid: str,
     CallStatus: str = Form(default=""),
@@ -104,7 +106,12 @@ async def handle_status(
 ) -> Response:
     """Twilio posts call status updates; send WhatsApp fallback on failure."""
     if CallStatus in ("failed", "busy", "no-answer"):
-        ctx_raw = await r.get(f"voice_ctx:{call_uuid}")
+        try:
+            ctx_raw = await r.get(f"voice_ctx:{call_uuid}")
+        except aioredis.RedisError:
+            logger.exception("Redis error in handle_status for %s", call_uuid)
+            return Response(content=str(VoiceResponse()), media_type="application/xml")
+
         if ctx_raw:
             ctx = json.loads(ctx_raw)
             phone = ctx.get("whatsapp_phone")

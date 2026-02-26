@@ -1,6 +1,3 @@
-import base64
-import json
-
 import pytest
 from httpx import AsyncClient
 
@@ -24,11 +21,12 @@ async def test_sheets_connect_returns_url(db_client: AsyncClient, auth_headers: 
     assert "auth_url" in data
     assert "accounts.google.com" in data["auth_url"]
 
-    # Verify state encodes the sheet_url
+    # Verify HMAC-signed state encodes the sheet_url
     from urllib.parse import urlparse, parse_qs
+    from app.services.sheets_service import _verify_state
     parsed = urlparse(data["auth_url"])
     state = parse_qs(parsed.query)["state"][0]
-    decoded = json.loads(base64.b64decode(state).decode())
+    decoded = _verify_state(state)
     assert decoded["sheet_url"] == SHEET_URL
 
 

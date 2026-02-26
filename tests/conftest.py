@@ -9,6 +9,9 @@ os.environ.setdefault("GOOGLE_CLIENT_SECRET", "test-client-secret")
 os.environ.setdefault("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/v1/auth/google/callback")
 os.environ.setdefault("GOOGLE_SHEETS_REDIRECT_URI", "http://localhost:8000/api/v1/sheets/callback")
 os.environ.setdefault("ENCRYPTION_KEY", Fernet.generate_key().decode())
+# Disable Twilio signature validation in tests
+os.environ["TWILIO_AUTH_TOKEN"] = ""
+os.environ["TWILIO_ACCOUNT_SID"] = ""
 
 import pytest
 from httpx import ASGITransport, AsyncClient

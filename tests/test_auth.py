@@ -1,8 +1,32 @@
+import json
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.redis import get_redis
+from app.main import app
 from app.models.user import User
+
+
+class MockRedis:
+    def __init__(self, store: dict | None = None):
+        self.store = store or {}
+
+    async def get(self, key: str):
+        return self.store.get(key)
+
+    async def getdel(self, key: str):
+        return self.store.pop(key, None)
+
+    async def setex(self, key: str, ttl: int, value):
+        self.store[key] = value
+
+    async def exists(self, key: str) -> int:
+        return 1 if key in self.store else 0
+
+    async def aclose(self):
+        pass
 
 
 @pytest.mark.asyncio
@@ -82,3 +106,61 @@ async def test_whatsapp_link_same_user_ok(
     )
     assert response.status_code == 200
     assert response.json()["phone"] == "+48111111111"
+
+
+@pytest.mark.asyncio
+async def test_exchange_valid_code(db_client: AsyncClient) -> None:
+    """H9: Exchange a valid auth code for tokens."""
+    tokens = {"access_token": "test-jwt", "refresh_token": "test-refresh", "token_type": "bearer"}
+    mock_store = {"auth_code:test-code-123": json.dumps(tokens)}
+
+    async def mock_get_redis():
+        yield MockRedis(mock_store)
+
+    app.dependency_overrides[get_redis] = mock_get_redis
+    try:
+        response = await db_client.post(
+            "/api/v1/auth/exchange",
+            json={"code": "test-code-123"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["access_token"] == "test-jwt"
+        assert data["refresh_token"] == "test-refresh"
+        # Code should be consumed (one-time use)
+        assert "auth_code:test-code-123" not in mock_store
+    finally:
+        app.dependency_overrides.pop(get_redis, None)
+
+
+@pytest.mark.asyncio
+async def test_exchange_invalid_code(db_client: AsyncClient) -> None:
+    """H9: Invalid auth code returns 400."""
+    async def mock_get_redis():
+        yield MockRedis({})
+
+    app.dependency_overrides[get_redis] = mock_get_redis
+    try:
+        response = await db_client.post(
+            "/api/v1/auth/exchange",
+            json={"code": "invalid-code"},
+        )
+        assert response.status_code == 400
+    finally:
+        app.dependency_overrides.pop(get_redis, None)
+
+
+@pytest.mark.asyncio
+async def test_refresh_token(db_client: AsyncClient, test_user: User) -> None:
+    """M14: Refresh token returns new tokens."""
+    from app.core.security import create_refresh_token
+
+    refresh = create_refresh_token({"sub": str(test_user.id), "email": test_user.email})
+    response = await db_client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": refresh},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "access_token" in data
+    assert "refresh_token" in data

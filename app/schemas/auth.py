@@ -1,7 +1,10 @@
+import re
 import uuid
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+_E164_PATTERN = re.compile(r"^\+[1-9]\d{1,14}$")
 
 
 class TokenResponse(BaseModel):
@@ -28,3 +31,10 @@ class UserResponse(BaseModel):
 
 class WhatsappLinkRequest(BaseModel):
     phone: str  # E.164 format, e.g. "+48123456789"
+
+    @field_validator("phone")
+    @classmethod
+    def validate_e164(cls, v: str) -> str:
+        if not _E164_PATTERN.match(v):
+            raise ValueError("Phone number must be in E.164 format (e.g. +48123456789)")
+        return v

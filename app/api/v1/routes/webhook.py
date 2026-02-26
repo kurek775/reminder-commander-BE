@@ -6,6 +6,7 @@ from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.twilio_auth import verify_twilio_signature
 from app.db.base import get_db
 from app.models.interaction_log import (
     Channel,
@@ -20,7 +21,7 @@ from app.models.sheet_integration import SheetIntegration
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/webhook", tags=["webhook"])
+router = APIRouter(prefix="/webhook", tags=["webhook"], dependencies=[Depends(verify_twilio_signature)])
 
 EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response/>'
 

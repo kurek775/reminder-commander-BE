@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.deps import get_current_user
 from app.db.base import get_db
 from app.models.sheet_integration import SheetIntegration
@@ -36,9 +37,9 @@ async def sheets_callback(
 ) -> RedirectResponse:
     try:
         await exchange_sheets_code(db, code, state)
-        return RedirectResponse(url="http://localhost:4200/sheets", status_code=302)
+        return RedirectResponse(url=f"{settings.frontend_url}/sheets", status_code=302)
     except Exception:
-        return RedirectResponse(url="http://localhost:4200/sheets?error=true", status_code=302)
+        return RedirectResponse(url=f"{settings.frontend_url}/sheets?error=true", status_code=302)
 
 
 @router.get("/", response_model=list[SheetIntegrationResponse])
