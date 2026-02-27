@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from croniter import croniter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 from app.models.interaction_log import (
@@ -31,7 +32,7 @@ _factory = None
 def _get_session_factory():
     global _engine, _factory
     if _engine is None:
-        _engine = create_async_engine(settings.database_url, echo=False, pool_pre_ping=True)
+        _engine = create_async_engine(settings.database_url, echo=False, poolclass=NullPool)
         _factory = async_sessionmaker(_engine, expire_on_commit=False)
     return _factory
 
