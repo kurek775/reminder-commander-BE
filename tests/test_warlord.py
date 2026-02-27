@@ -13,23 +13,10 @@ from app.models.interaction_log import Channel, Direction, InteractionLog
 from app.models.sheet_integration import SheetIntegration
 from app.models.tracker_rule import RuleType, TrackerRule
 from app.models.user import User
+from tests.conftest import MockRedis
 
 CALL_UUID = str(uuid.uuid4())
 AUDIO_BYTES = b"FAKE_MP3_BYTES"
-
-
-class MockRedis:
-    def __init__(self, store: dict | None = None):
-        self.store = store or {}
-
-    async def get(self, key: str):
-        return self.store.get(key)
-
-    async def exists(self, key: str) -> int:
-        return 1 if key in self.store else 0
-
-    async def aclose(self):
-        pass
 
 
 @pytest.fixture
@@ -87,12 +74,8 @@ async def test_voice_twiml_returns_xml(db_client: AsyncClient) -> None:
     # Mock Redis: audio present → expect <Play>
     mock_store = {f"voice_audio:{CALL_UUID}": b"1", f"voice_ctx:{CALL_UUID}": b"{}"}
 
-    class MockRedisWithExists(MockRedis):
-        async def exists(self, key: str) -> int:
-            return 1 if key in self.store else 0
-
     async def mock_get_redis():
-        yield MockRedisWithExists(mock_store)
+        yield MockRedis(mock_store)
 
     app.dependency_overrides[get_redis] = mock_get_redis
     try:

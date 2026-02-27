@@ -117,7 +117,7 @@ async def handle_status(
             phone = ctx.get("whatsapp_phone")
             task_name = ctx.get("task_name", "")
             if phone:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 try:
                     await loop.run_in_executor(
                         None,

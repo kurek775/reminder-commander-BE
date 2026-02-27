@@ -1,6 +1,8 @@
 from urllib.parse import urlencode
 
 import httpx
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -40,16 +42,14 @@ async def exchange_google_code(code: str) -> dict:
     if not id_token_str:
         raise ValueError("No ID token in Google response")
 
-    # Decode JWT payload (Google's token endpoint is trusted; skip full sig verify here)
-    import base64
-    import json
-
     try:
-        padding = 4 - len(id_token_str.split(".")[1]) % 4
-        payload_b64 = id_token_str.split(".")[1] + ("=" * (padding % 4))
-        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        payload = google_id_token.verify_oauth2_token(
+            id_token_str,
+            google_requests.Request(),
+            audience=settings.google_client_id,
+        )
     except Exception as exc:
-        raise ValueError("Failed to decode ID token") from exc
+        raise ValueError("Failed to verify ID token") from exc
 
     return {
         "google_id": payload["sub"],

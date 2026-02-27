@@ -1,5 +1,6 @@
 import json
 import logging
+import uuid
 import uuid as uuid_mod
 from typing import Annotated
 
@@ -91,7 +92,9 @@ async def get_me(
 
 
 @router.post("/refresh", response_model=TokenResponse)
+@limiter.limit("20/minute")
 async def refresh_token(
+    request: Request,
     body: RefreshRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
@@ -102,8 +105,6 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token",
         )
-
-    import uuid
 
     user_id_str = payload.get("sub")
     if not user_id_str:

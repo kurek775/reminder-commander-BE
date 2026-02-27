@@ -1,7 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
@@ -20,24 +20,20 @@ async def get_summary(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> DashboardSummary:
-    health_rules = await db.execute(
-        select(func.count())
+    # Combine health + warlord rule counts in a single query
+    rule_counts = await db.execute(
+        select(
+            func.count(case((TrackerRule.rule_type == RuleType.health_tracker, 1))),
+            func.count(case((TrackerRule.rule_type == RuleType.warlord, 1))),
+        )
         .select_from(TrackerRule)
         .where(
             TrackerRule.user_id == current_user.id,
-            TrackerRule.rule_type == RuleType.health_tracker,
             TrackerRule.is_active.is_(True),
         )
     )
-    warlord_rules = await db.execute(
-        select(func.count())
-        .select_from(TrackerRule)
-        .where(
-            TrackerRule.user_id == current_user.id,
-            TrackerRule.rule_type == RuleType.warlord,
-            TrackerRule.is_active.is_(True),
-        )
-    )
+    health_count, warlord_count = rule_counts.one()
+
     sheets = await db.execute(
         select(func.count())
         .select_from(SheetIntegration)
@@ -53,8 +49,8 @@ async def get_summary(
     )
 
     return DashboardSummary(
-        health_rules_active=health_rules.scalar_one(),
-        warlord_rules_active=warlord_rules.scalar_one(),
+        health_rules_active=health_count,
+        warlord_rules_active=warlord_count,
         sheets_connected=sheets.scalar_one(),
         has_whatsapp=bool(current_user.whatsapp_phone),
         recent_interactions=interactions.scalar_one(),

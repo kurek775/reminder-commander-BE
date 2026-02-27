@@ -1,6 +1,8 @@
 import uuid
+from datetime import date
 from typing import Annotated
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +13,7 @@ from app.db.base import get_db
 from app.models.tracker_rule import RuleType, TrackerRule
 from app.models.sheet_integration import SheetIntegration
 from app.models.user import User
-from app.services.sheets_service import get_warlord_tasks
+from app.services.sheets_service import _refresh_token_if_needed, get_warlord_tasks
 
 router = APIRouter(prefix="/warlord", tags=["warlord"])
 
@@ -36,10 +38,6 @@ async def debug_warlord_rule(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """Return raw sheet rows and parsed missed tasks for a warlord rule."""
-    from datetime import date
-    import httpx
-    from app.services.sheets_service import _refresh_token_if_needed
-
     result = await db.execute(
         select(TrackerRule, SheetIntegration)
         .join(SheetIntegration, TrackerRule.sheet_integration_id == SheetIntegration.id)
@@ -56,7 +54,7 @@ async def debug_warlord_rule(
         f"https://sheets.googleapis.com/v4/spreadsheets/"
         f"{integration.google_sheet_id}/values/A:C"
     )
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=30.0) as client:
         r = await client.get(url, headers={"Authorization": f"Bearer {access_token}"})
         raw = r.json()
 

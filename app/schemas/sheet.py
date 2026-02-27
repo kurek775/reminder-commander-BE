@@ -16,5 +16,10 @@ class SheetIntegrationResponse(BaseModel):
     sheet_name: str
     is_active: bool
     token_expires_at: Optional[datetime] = None
+    display_name: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
+
+class SheetIntegrationUpdate(BaseModel):
+    display_name: Optional[str] = None

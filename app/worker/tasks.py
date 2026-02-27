@@ -79,7 +79,7 @@ async def _process_rules(session) -> None:
         if not croniter.match(rule.cron_schedule, now):
             continue
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             sid = await loop.run_in_executor(
                 None, send_whatsapp, user.whatsapp_phone, rule.prompt_text
@@ -122,7 +122,7 @@ async def _async_scan_warlord(force: bool = False) -> None:
 
 
 async def _process_warlord_rules(session, force: bool = False) -> None:
-    from app.core.redis import _create_redis
+    from app.core.redis import redis_client
     from app.services.elevenlabs_service import generate_audio
     from app.services.sheets_service import get_warlord_tasks
     from app.services.twilio_service import make_voice_call
@@ -142,8 +142,7 @@ async def _process_warlord_rules(session, force: bool = False) -> None:
     )
     rows = result.all()
 
-    r = _create_redis()
-    try:
+    async with redis_client() as r:
         for rule, user, integration in rows:
             if not force and not croniter.match(rule.cron_schedule, now):
                 continue
@@ -183,7 +182,7 @@ async def _process_warlord_rules(session, force: bool = False) -> None:
                 await session.flush()
                 await session.refresh(log)
 
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
 
                 ctx = {
                     "user_id": str(user.id),
@@ -225,5 +224,3 @@ async def _process_warlord_rules(session, force: bool = False) -> None:
                         logger.exception(
                             "WhatsApp fallback also failed for task %s", task.task_name
                         )
-    finally:
-        await r.aclose()

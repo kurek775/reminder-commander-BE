@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     redis_port: int = 6379
     redis_password: str = ""
 
-    cors_origins: list[str] = ["http://localhost:4200", "http://localhost:3000"]
+    cors_origins: list[str] = ["http://localhost:4200", "http://127.0.0.1:4200", "http://localhost:3000"]
 
     # JWT — H1: default rejected in production
     secret_key: str = _DEFAULT_SECRET_KEY

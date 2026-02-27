@@ -7,26 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.redis import get_redis
 from app.main import app
 from app.models.user import User
-
-
-class MockRedis:
-    def __init__(self, store: dict | None = None):
-        self.store = store or {}
-
-    async def get(self, key: str):
-        return self.store.get(key)
-
-    async def getdel(self, key: str):
-        return self.store.pop(key, None)
-
-    async def setex(self, key: str, ttl: int, value):
-        self.store[key] = value
-
-    async def exists(self, key: str) -> int:
-        return 1 if key in self.store else 0
-
-    async def aclose(self):
-        pass
+from tests.conftest import MockRedis
 
 
 @pytest.mark.asyncio

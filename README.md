@@ -6,7 +6,7 @@ FastAPI backend with Celery workers, PostgreSQL, Redis, ElevenLabs TTS, and Twil
 
 ## Current Status
 
-All 6 phases complete. **32 tests pass.**
+All 7 phases complete. **45 tests pass.**
 
 | Phase | Feature | Status |
 |-------|---------|--------|
@@ -16,6 +16,7 @@ All 6 phases complete. **32 tests pass.**
 | 4 | Health Tracker — WhatsApp reminders via cron | ✅ |
 | 5 | Warlord — voice calls for overdue sheet tasks | ✅ |
 | 6 | Warlord UI support (trigger, interactions, debug APIs) | ✅ |
+| 7 | Smarter Sheets (create, preview, rename, disconnect) | ✅ |
 
 ---
 
@@ -80,6 +81,10 @@ ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 REFRESH_TOKEN_EXPIRE_DAYS=7
 
+# Frontend
+FRONTEND_URL=http://localhost:4200
+CORS_ORIGINS=["http://localhost:4200","http://127.0.0.1:4200"]
+
 # Google OAuth (login)
 GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
@@ -87,6 +92,9 @@ GOOGLE_REDIRECT_URI=http://localhost:8000/api/v1/auth/google/callback
 
 # Google Sheets OAuth
 GOOGLE_SHEETS_REDIRECT_URI=http://localhost:8000/api/v1/sheets/callback
+
+# Note: GOOGLE_REDIRECT_URI and GOOGLE_SHEETS_REDIRECT_URI are auto-derived
+# from BACKEND_URL if not explicitly set.
 
 # Encryption key for tokens stored in DB
 # Generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -118,16 +126,28 @@ NGROK_AUTHTOKEN=...
 |--------|------|-------------|
 | GET | `/api/v1/auth/google` | Redirect to Google login |
 | GET | `/api/v1/auth/google/callback` | Handle Google OAuth callback |
+| POST | `/api/v1/auth/exchange` | Exchange short-lived auth code for JWT tokens |
+| POST | `/api/v1/auth/refresh` | Refresh access token |
 | GET | `/api/v1/auth/me` | Get current user |
-| POST | `/api/v1/auth/whatsapp/link` | Link WhatsApp phone number |
+| PATCH | `/api/v1/auth/whatsapp/link` | Link WhatsApp phone number |
 
 ### Sheets
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/sheets/connect` | Start Google Sheets OAuth |
+| GET | `/api/v1/sheets/connect` | Start Google Sheets OAuth (connect existing) |
+| GET | `/api/v1/sheets/create?title=...` | Start OAuth to create a new sheet |
 | GET | `/api/v1/sheets/callback` | Handle Sheets OAuth callback |
 | GET | `/api/v1/sheets/` | List connected sheets |
 | GET | `/api/v1/sheets/{id}/headers` | Get column headers from sheet row 1 |
+| GET | `/api/v1/sheets/{id}/rule-count` | Count rules using this sheet |
+| GET | `/api/v1/sheets/{id}/preview` | Preview sheet data (headers + rows) |
+| PATCH | `/api/v1/sheets/{id}` | Update display name |
+| DELETE | `/api/v1/sheets/{id}` | Disconnect (soft-delete) sheet |
+
+### Dashboard
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/dashboard/summary` | Dashboard stats for current user |
 
 ### Rules
 | Method | Path | Description |
@@ -159,7 +179,7 @@ NGROK_AUTHTOKEN=...
 ### Webhook
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/v1/webhook/whatsapp` | Inbound WhatsApp from Twilio |
+| POST | `/api/v1/webhook/twilio` | Inbound WhatsApp from Twilio |
 
 ---
 
@@ -196,11 +216,11 @@ Leave blank for the default: `"{task_name} was due on {deadline}. Complete it no
 | Model | Table | Key fields |
 |-------|-------|------------|
 | `User` | `users` | `email`, `google_id`, `whatsapp_phone` |
-| `SheetIntegration` | `sheet_integrations` | `google_sheet_id`, encrypted tokens |
+| `SheetIntegration` | `sheet_integrations` | `google_sheet_id`, `display_name`, encrypted tokens |
 | `TrackerRule` | `tracker_rules` | `rule_type` (`health_tracker`/`warlord`), `cron_schedule`, `prompt_text` |
 | `InteractionLog` | `interaction_logs` | `direction`, `channel` (`whatsapp`/`voice`), `status` |
 
-Migrations live in `alembic/versions/`. Run `alembic upgrade head` to apply.
+4 migrations live in `alembic/versions/` (001–004). Run `alembic upgrade head` to apply.
 
 ---
 
@@ -229,6 +249,7 @@ app/
   api/v1/routes/
     health.py
     auth.py
+    dashboard.py             # User dashboard summary
     sheets.py
     rules.py
     webhook.py
@@ -242,10 +263,12 @@ app/
     interaction_log.py
   schemas/
     rule.py                  # TrackerRuleCreate / Update / Response
+    sheet.py                 # SheetIntegrationResponse / Update
+    dashboard.py             # DashboardSummary
   services/
     elevenlabs_service.py    # generate_audio() → MP3 bytes
     twilio_service.py        # make_voice_call(), send_whatsapp()
-    sheets_service.py        # OAuth, get_warlord_tasks(), append_to_sheet()
+    sheets_service.py        # OAuth, create, preview, rename, disconnect, get_warlord_tasks()
     rules_service.py         # CRUD for TrackerRule
   worker/
     celery_app.py            # Celery instance wired to Redis
