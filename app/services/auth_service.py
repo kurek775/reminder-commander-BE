@@ -18,7 +18,7 @@ def get_google_auth_url() -> str:
         "response_type": "code",
         "scope": "openid email profile",
         "access_type": "offline",
-        "prompt": "consent",
+        "prompt": "select_account",
     }
     return f"https://accounts.google.com/o/oauth2/auth?{urlencode(params)}"
 
